@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { AuthError } from '../../../lib/accounts'
 import { listGatewayTeams, type GatewayTeam } from '../../../lib/auth'
+import { localMode, LOCAL_TEAM } from '../../../lib/local-mode'
 import { withUserRoute } from '../../../lib/route-auth'
 import { teamCookie } from '../../../lib/secure-session'
 
@@ -11,6 +12,8 @@ export const maxDuration = 30
 const cache = new Map<string, { at: number; teams: GatewayTeam[] }>()
 
 async function gatewayTeams(accessToken: string): Promise<GatewayTeam[]> {
+  // Self-hosted: the one local team, with nothing to probe.
+  if (localMode()) return [{ ...LOCAL_TEAM, balance: null }]
   const key = createHash('sha256').update(accessToken).digest('hex')
   const cached = cache.get(key)
   if (cached && Date.now() - cached.at < 5 * 60_000) return cached.teams

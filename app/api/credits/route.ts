@@ -1,4 +1,5 @@
 import { resolveGrantedTeam } from '../../../lib/auth'
+import { localMode } from '../../../lib/local-mode'
 import { withUserRoute } from '../../../lib/route-auth'
 
 export const maxDuration = 30
@@ -10,6 +11,8 @@ function upstreamStatus(status: number): number {
 }
 
 export const GET = withUserRoute(async (_request, { session }) => {
+  // Self-hosted models bill nothing; a null balance hides the amount.
+  if (localMode()) return Response.json({ balance: null, totalUsed: 0, flexible: false })
   const { teamId } = await resolveGrantedTeam(session)
   const response = await fetch(`https://ai-gateway.vercel.sh/v1/credits?teamId=${encodeURIComponent(teamId)}`, {
     headers: { Authorization: `Bearer ${session.accessToken}` },

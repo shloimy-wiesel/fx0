@@ -35,12 +35,24 @@ function decodeSessionCursor(value?: string | null): SessionCursor | null {
   } catch { throw new AuthError(400, 'Invalid chat list cursor') }
 }
 
+let pool: Promise<import('pg').Pool> | undefined
+function localPool(connectionString: string): Promise<import('pg').Pool> {
+  return pool ??= import('pg').then(({ default: pg }) => new pg.Pool({ connectionString, max: 10 }))
+}
+
 // Neon HTTP has no request-owned connection or pool to drain. Never issue BEGIN
 // across HTTP calls: writes needing atomicity are expressed as one SQL statement.
 export async function withAccountDatabase<T>(work: (query: AccountQuery) => Promise<T>, { timeoutMs }: { timeoutMs?: number } = {}): Promise<T> {
   if (typeof window !== 'undefined') throw new Error('Accounts are server only')
   const connectionString = process.env.DATABASE_URL
   if (!connectionString) throw new Error('DATABASE_URL is required')
+  // Self-hosted (FX0_LOCAL=1): plain Postgres over a pooled TCP connection. Each
+  // query is still one statement, so the same SQL holds on both drivers.
+  if (process.env.FX0_LOCAL === '1') {
+    const pool = await localPool(connectionString)
+    return work(async (text, values = []) => (await pool.query({ text, values,
+      ...(timeoutMs ? { query_timeout: timeoutMs } : {}) })).rows as Record<string, unknown>[])
+  }
   const { neon } = await import('@neondatabase/serverless')
   const sql = neon(connectionString)
   return work(async (text, values = []) => await sql.query(text, values,

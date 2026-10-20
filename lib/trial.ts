@@ -10,6 +10,8 @@ import { getSessionOptions } from './secure-session.ts'
 import { prefixed, redis } from './journal.ts'
 // @ts-expect-error Node strip-types tests require the source extension.
 import { FREE_PROMPTS } from './trial-policy.ts'
+// @ts-expect-error Node strip-types tests require the source extension.
+import { secureCookies } from './session-cookies.ts'
 
 export const GUEST_COOKIE = 'fx0_guest'
 const GUEST_TTL = 30 * 24 * 60 * 60
@@ -70,7 +72,7 @@ export async function createGuestSession(): Promise<GuestSession> {
   if (!trialEnabled()) throw new AuthError()
   const session = newGuestSession()
   ;(await cookies()).set(GUEST_COOKIE, await sealGuestSession(session), {
-    httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'lax', path: '/', maxAge: GUEST_TTL,
+    httpOnly: true, secure: secureCookies(), sameSite: 'lax', path: '/', maxAge: GUEST_TTL,
   })
   return session
 }

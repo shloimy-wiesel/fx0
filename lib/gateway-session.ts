@@ -7,6 +7,8 @@ import { MIN_GATEWAY_VALIDITY_MS } from './auth-protocol.ts'
 // @ts-expect-error Node strip-types tests require the source extension.
 import { redactSecrets } from './auth-crypto.ts'
 import type { TrialCredential } from './trial'
+// @ts-expect-error Node strip-types tests require the source extension.
+import { LOCAL_PROVIDER_BASE, localModelUrl } from './local-mode.ts'
 
 export function assertGatewaySession(session: SessionData | null, minimumValidity = 30_000): asserts session is SessionData {
   if (!session?.isLoggedIn || !session.userId || !session.accessToken) throw new AuthError()
@@ -121,12 +123,18 @@ export function htmlFieldExtractor(emit: (chunk: string) => void): (delta: strin
   }
 }
 
-// Gateway streams a tool call's arguments as tool-input-delta parts. libfx only
+// Gateway streams a tool call's arguments as tool-input-delta parts; an OpenAI
+// Chat Completions server (self-hosted mode) as choices[].delta.tool_calls. libfx only
 // surfaces the finished call, so the transport observes those partial arguments.
 export interface DesignDraftObserver {
   delta(callId: string, chunk: string): void
   end?(callId: string): Promise<void> | void
   abort?(): Promise<void> | void
+}
+
+interface ChatChoice {
+  delta?: { tool_calls?: { index?: number; id?: string; function?: { name?: string; arguments?: string } }[] }
+  finish_reason?: string | null
 }
 
 // Observe on the SDK's own read path. The argument-end flush happens before
@@ -135,6 +143,8 @@ function watchDesignDrafts(body: ReadableStream<Uint8Array>, observer: DesignDra
     const reader = body.getReader()
     const decoder = new TextDecoder()
     const designs = new Map<string, (delta: string) => void>()
+    // Chat Completions names a call by its id once, then by its index.
+    const callIds = new Map<number, string>()
     let buffer = ''
     const parse = async () => {
       let boundary = buffer.indexOf('\n')
@@ -143,9 +153,29 @@ function watchDesignDrafts(body: ReadableStream<Uint8Array>, observer: DesignDra
         buffer = buffer.slice(boundary + 1)
         boundary = buffer.indexOf('\n')
         if (!line.startsWith('data:')) continue
-        let part: { type?: string; id?: string; toolName?: string; delta?: string }
+        let part: { type?: string; id?: string; toolName?: string; delta?: string; choices?: ChatChoice[] }
         try { part = JSON.parse(line.slice(5)) } catch { continue }
-        if (part.type === 'tool-input-start' && part.toolName === 'publish_design' && part.id) {
+        if (Array.isArray(part.choices)) {
+          for (const choice of part.choices) {
+            for (const call of choice?.delta?.tool_calls ?? []) {
+              const index = call.index ?? 0
+              if (call.id) {
+                if (call.function?.name === 'publish_design') {
+                  const id = call.id
+                  callIds.set(index, id)
+                  designs.set(id, htmlFieldExtractor((chunk) => observer.delta(id, chunk)))
+                } else callIds.delete(index)
+              }
+              const id = callIds.get(index)
+              if (id && typeof call.function?.arguments === 'string') designs.get(id)?.(call.function.arguments)
+            }
+            if (choice?.finish_reason) {
+              for (const id of designs.keys()) await observer.end?.(id)
+              designs.clear()
+              callIds.clear()
+            }
+          }
+        } else if (part.type === 'tool-input-start' && part.toolName === 'publish_design' && part.id) {
           const id = part.id
           designs.set(id, htmlFieldExtractor((chunk) => observer.delta(id, chunk)))
         } else if (part.type === 'tool-input-delta' && part.id && typeof part.delta === 'string') {
@@ -197,6 +227,7 @@ function transport(
 ): typeof fetch {
   return async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input))
+    if (process.env.FX0_LOCAL === '1') return localTransport(url, input, init, session, fetcher, onDraft)
     if (url.origin !== 'https://ai-gateway.vercel.sh' || url.username || url.password) {
       throw new AuthError(403, 'Gateway credentials cannot leave AI Gateway')
     }
@@ -254,6 +285,37 @@ function transport(
     }
     return new Response(JSON.stringify({ error }), { status: response.status, headers: safeHeaders })
   }
+}
+
+// Self-hosted: libfx sends its custom provider's requests to LOCAL_PROVIDER_BASE,
+// and they go on to the configured server. Nothing else leaves this transport, and
+// a request still needs a signed-in caller's recorded funding, as on Gateway.
+async function localTransport(
+  url: URL,
+  input: RequestInfo | URL,
+  init: RequestInit | undefined,
+  session: () => SessionData | TrialCredential | null,
+  fetcher: typeof fetch,
+  onDraft?: DesignDraftObserver | ((callId: string, chunk: string) => void),
+): Promise<Response> {
+  if (!url.href.startsWith(`${LOCAL_PROVIDER_BASE}/`)) {
+    return new Response(JSON.stringify({ error: { message: 'Self-hosted fx0 reaches only its local model server' } }), {
+      status: 404, headers: { 'content-type': 'application/json' },
+    })
+  }
+  assertGatewaySession(session() as SessionData | null)
+  const target = `${localModelUrl()}${url.href.slice(LOCAL_PROVIDER_BASE.length)}`
+  // The bearer token libfx set only names the session (localProvider); the server gets its own key.
+  const headers = new Headers(input instanceof Request ? input.headers : undefined)
+  new Headers(init?.headers).forEach((value, name) => headers.set(name, value))
+  headers.delete('authorization')
+  if (process.env.FX0_LOCAL_MODEL_KEY) headers.set('authorization', `Bearer ${process.env.FX0_LOCAL_MODEL_KEY}`)
+  const response = await fetcher(input instanceof Request ? new Request(target, input) : target, { ...init, headers, cache: 'no-store', redirect: 'error' })
+  if (response.ok && onDraft && response.body && url.pathname.endsWith('/chat/completions')) {
+    const observer = typeof onDraft === 'function' ? { delta: onDraft } : onDraft
+    return new Response(watchDesignDrafts(response.body, observer), { status: response.status, statusText: response.statusText, headers: response.headers })
+  }
+  return response
 }
 
 // Consecutive 429s before the turn gives up. The runtime otherwise keeps backing

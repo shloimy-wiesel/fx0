@@ -1,0 +1,120 @@
+# Self-hosted fx0: everything runs on this machine, with no Vercel, AI Gateway,
+# Neon or Upstash. Copy selfhost.env.example to .env, then `docker compose up -d`.
+# See SELF_HOSTING.md, including how to run on a machine with no internet.
+
+x-db-url: &db-url postgres://fx0:${POSTGRES_PASSWORD:-fx0}@postgres:5432/fx0
+
+services:
+  app:
+    build: .
+    image: devselfhost/fx0:0.1.0
+    restart: unless-stopped
+    ports:
+      - "${FX0_BIND:-127.0.0.1}:${FX0_PORT:-3000}:3000"
+    environment:
+      FX0_LOCAL: "1"
+      APP_URL: ${APP_URL:-http://localhost:3000}
+      SESSION_SECRET: ${SESSION_SECRET:?Set SESSION_SECRET in .env (at least 32 characters)}
+      DATABASE_URL: *db-url
+      KV_REST_API_URL: http://redis-http:80
+      KV_REST_API_TOKEN: ${REDIS_HTTP_TOKEN:-fx0-local-redis}
+      FX0_REDIS_PREFIX: fx0:local
+      FX0_MODEL: ${FX0_MODEL:-qwen3:14b}
+      FX0_LOCAL_MODELS: ${FX0_LOCAL_MODELS:-}
+      FX0_LOCAL_MODEL_URL: ${FX0_LOCAL_MODEL_URL:-http://ollama:11434/v1}
+      FX0_LOCAL_MODEL_KEY: ${FX0_LOCAL_MODEL_KEY:-}
+      FX0_LOCAL_CONTEXT_WINDOW: ${FX0_CONTEXT_WINDOW:-32768}
+      FX0_LOCAL_MAX_OUTPUT_TOKENS: ${FX0_LOCAL_MAX_OUTPUT_TOKENS:-16384}
+      FX0_LOCAL_VISION: ${FX0_LOCAL_VISION:-0}
+      FX0_LOCAL_USER_EMAIL: ${FX0_LOCAL_USER_EMAIL:-local@localhost}
+      FX0_LOCAL_USER_NAME: ${FX0_LOCAL_USER_NAME:-Local user}
+    volumes:
+      - fx-sessions:/data/sessions
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      redis-http:
+        condition: service_started
+      ollama:
+        condition: service_started
+
+  # Applies migrations/ to Postgres, then exits.
+  migrate:
+    image: devselfhost/fx0:0.1.0
+    build: .
+    command: ["node", "scripts/migrate-database.mjs"]
+    environment:
+      FX0_LOCAL: "1"
+      DATABASE_URL: *db-url
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  postgres:
+    image: postgres:17-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: fx0
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-fx0}
+      POSTGRES_DB: fx0
+    volumes:
+      - postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fx0 -d fx0"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  redis:
+    image: redis:7.4-alpine
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - redis:/data
+
+  # Upstash's REST API in front of Redis, so fx0's @upstash/redis client works unchanged.
+  redis-http:
+    image: hiett/serverless-redis-http:0.0.10
+    restart: unless-stopped
+    environment:
+      SRH_MODE: env
+      SRH_TOKEN: ${REDIS_HTTP_TOKEN:-fx0-local-redis}
+      SRH_CONNECTION_STRING: redis://redis:6379
+    depends_on:
+      - redis
+
+  ollama:
+    image: ollama/ollama:0.12.6
+    restart: unless-stopped
+    environment:
+      # Must match FX0_LOCAL_CONTEXT_WINDOW: libfx compacts the chat against it.
+      OLLAMA_CONTEXT_LENGTH: ${FX0_CONTEXT_WINDOW:-32768}
+      OLLAMA_KEEP_ALIVE: 30m
+    volumes:
+      - ollama:/root/.ollama
+    # NVIDIA GPU: install the NVIDIA Container Toolkit, then uncomment.
+    # deploy:
+    #   resources:
+    #     reservations:
+    #       devices:
+    #         - driver: nvidia
+    #           count: all
+    #           capabilities: [gpu]
+
+  # One-shot: downloads FX0_MODEL into the ollama volume. Needs internet once;
+  # on an offline machine, copy the volume instead (SELF_HOSTING.md).
+  # Run with: docker compose --profile setup run --rm pull-model
+  pull-model:
+    image: ollama/ollama:0.12.6
+    profiles: ["setup"]
+    environment:
+      OLLAMA_HOST: http://ollama:11434
+    entrypoint: ["ollama", "pull", "${FX0_MODEL:-qwen3:14b}"]
+    depends_on:
+      - ollama
+
+volumes:
+  postgres:
+  redis:
+  ollama:
+  fx-sessions:

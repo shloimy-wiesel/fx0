@@ -1,13 +1,36 @@
+import { randomBytes } from 'node:crypto'
 import { sealData } from 'iron-session'
 import { NextResponse, type NextRequest } from 'next/server'
+import { upsertAccount } from '@/lib/accounts'
+import { publicUser } from '@/lib/auth'
 import { randomHandle, pkceChallenge } from '@/lib/auth-crypto'
-import { getSessionOptions } from '@/lib/secure-session'
+import { localIdentity, localMode, LOCAL_TEAM } from '@/lib/local-mode'
+import { getSessionOptions, sealSessionCookie, selectorCookie, type SessionData } from '@/lib/secure-session'
+import { secureCookies, signedInHintCookie, signOutPendingCookie, SESSION_TTL_SECONDS } from '@/lib/session-cookies'
 import { logAuthFailure, requestOrigin, SIGN_IN_UNAVAILABLE_PATH, FLOW_COOKIE_NAME, FLOW_COOKIE_OPTIONS, FLOW_TTL_SECONDS, type OAuthFlow } from '@/lib/auth-protocol'
+
+// Self-hosted: the one local account signs in at once, with no provider. Its
+// grant lasts as long as the cookie and has no refresh token to renew.
+async function localSignIn(request: NextRequest): Promise<NextResponse> {
+  const origin = requestOrigin(request)
+  const loginAt = Date.now()
+  const session: SessionData = { ...localIdentity(), ...LOCAL_TEAM, loginId: randomBytes(16).toString('hex'), loginAt,
+    accessToken: 'local', expiresAt: loginAt + SESSION_TTL_SECONDS * 1000, isLoggedIn: true }
+  await upsertAccount(publicUser(session))
+  const response = NextResponse.redirect(new URL('/', origin))
+  for (const cookie of [selectorCookie(session.loginId).setCookie, (await sealSessionCookie(session)).setCookie,
+    signedInHintCookie(true, secureCookies()), signOutPendingCookie(false, secureCookies())]) {
+    response.headers.append('set-cookie', cookie)
+  }
+  response.headers.set('Cache-Control', 'no-store')
+  return response
+}
 
 export async function GET(request: NextRequest) {
   // Read first: request data keeps this handler out of the build's prerender.
   const reauth = request.nextUrl.searchParams.get('reauth') === 'true'
   try {
+    if (localMode()) return await localSignIn(request)
     const clientId = process.env.VERCEL_OAUTH_CLIENT_ID
     if (!clientId || !process.env.VERCEL_OAUTH_CLIENT_SECRET) throw new Error('OAuth is not configured')
     const origin = requestOrigin(request)

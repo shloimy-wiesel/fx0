@@ -3,7 +3,7 @@ import { AuthError } from '@/lib/accounts'
 import { revokeAccessToken } from '@/lib/auth'
 import { assertSameOrigin, FLOW_COOKIE_NAME, FLOW_COOKIE_OPTIONS, isLoginId, SESSION_COOKIE_NAME } from '@/lib/auth-protocol'
 import { getSessionForSignOut, sealSessionCookie, selectorCookie } from '@/lib/secure-session'
-import { signedInHintCookie, signOutPendingCookie } from '@/lib/session-cookies'
+import { secureCookies, signedInHintCookie, signOutPendingCookie } from '@/lib/session-cookies'
 import { revokeLoginCredentials } from '@/lib/turn-credential'
 
 export async function POST(request: NextRequest) {
@@ -38,7 +38,7 @@ export async function POST(request: NextRequest) {
   response.cookies.set(FLOW_COOKIE_NAME, '', { ...FLOW_COOKIE_OPTIONS, maxAge: 0 })
   if (cleared) response.headers.append('set-cookie', cleared.setCookie)
   response.headers.append('set-cookie', selectorCookie(null).setCookie)
-  response.headers.append('set-cookie', signedInHintCookie(false, process.env.NODE_ENV === 'production'))
-  response.headers.append('set-cookie', signOutPendingCookie(false, process.env.NODE_ENV === 'production'))
+  response.headers.append('set-cookie', signedInHintCookie(false, secureCookies()))
+  response.headers.append('set-cookie', signOutPendingCookie(false, secureCookies()))
   return response
 }

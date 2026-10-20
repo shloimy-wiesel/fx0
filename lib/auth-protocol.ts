@@ -32,12 +32,14 @@ export function grantCookieName(loginId: string): string {
 
 // @ts-expect-error Node strip-types tests require the source extension.
 export { SESSION_TTL_SECONDS, SIGNED_IN_HINT_COOKIE } from './session-cookies.ts'
+// @ts-expect-error Node strip-types tests require the source extension.
+import { secureCookies } from './session-cookies.ts'
 export const FLOW_COOKIE_NAME = 'vercel_oauth_flow'
 export const FLOW_TTL_SECONDS = 600
 export const TOKEN_ENDPOINT = 'https://api.vercel.com/login/oauth/token'
 export const FLOW_COOKIE_OPTIONS = {
   httpOnly: true,
-  secure: process.env.NODE_ENV === 'production',
+  secure: secureCookies(),
   sameSite: 'lax' as const,
   path: '/api/auth',
   maxAge: FLOW_TTL_SECONDS,
@@ -47,7 +49,7 @@ function appOrigin(appUrl = process.env.APP_URL): string {
   if (!appUrl) throw new Error('APP_URL is required')
   const url = new URL(appUrl)
   if (url.username || url.password || (url.protocol !== 'https:' &&
-      !(process.env.NODE_ENV !== 'production' && url.protocol === 'http:'))) {
+      !((process.env.NODE_ENV !== 'production' || process.env.FX0_LOCAL === '1') && url.protocol === 'http:'))) {
     throw new Error('APP_URL must be a trusted HTTP(S) origin')
   }
   return url.origin

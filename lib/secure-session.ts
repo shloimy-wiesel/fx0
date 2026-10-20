@@ -5,7 +5,7 @@ import { NextResponse, type NextRequest } from 'next/server.js'
 // @ts-expect-error Node strip-types tests require the source extension.
 import { grantCookieName, isLoginId, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS } from './auth-protocol.ts'
 // @ts-expect-error Node strip-types tests require the source extension.
-import { SIGN_OUT_PENDING_COOKIE } from './session-cookies.ts'
+import { secureCookies, SIGN_OUT_PENDING_COOKIE } from './session-cookies.ts'
 
 export { grantCookieName, SESSION_COOKIE_NAME, SESSION_TTL_SECONDS }
 
@@ -33,7 +33,7 @@ export function getSessionOptions(): SessionOptions {
     ttl: SESSION_TTL_SECONDS,
     cookieOptions: {
       httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
+      secure: secureCookies(),
       sameSite: 'lax',
       maxAge: SESSION_TTL_SECONDS,
       path: '/',

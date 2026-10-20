@@ -4,7 +4,7 @@ import { NextResponse, type NextRequest } from 'next/server'
 import { AuthError, upsertAccount } from '@/lib/accounts'
 import { getGrantedTeam, publicUser } from '@/lib/auth'
 import { getSessionOptions, sealSessionCookie, selectorCookie, type SessionData } from '@/lib/secure-session'
-import { signedInHintCookie, signOutPendingCookie } from '@/lib/session-cookies'
+import { secureCookies, signedInHintCookie, signOutPendingCookie } from '@/lib/session-cookies'
 import {
   logAuthFailure, requestOrigin, SIGN_IN_UNAVAILABLE_PATH, FLOW_COOKIE_NAME, FLOW_COOKIE_OPTIONS, FLOW_TTL_SECONDS, TOKEN_ENDPOINT,
   isLoginId, SESSION_COOKIE_NAME, validOAuthFlow, validOAuthTokens, verifyVercelIdToken, type OAuthFlow,
@@ -54,8 +54,8 @@ export async function GET(request: NextRequest) {
       sessionCookies.push((await sealSessionCookie(null, previous)).setCookie)
     }
     sessionCookies.push(selectorCookie(session.loginId).setCookie, cookie.setCookie,
-      signedInHintCookie(true, process.env.NODE_ENV === 'production'),
-      signOutPendingCookie(false, process.env.NODE_ENV === 'production'))
+      signedInHintCookie(true, secureCookies()),
+      signOutPendingCookie(false, secureCookies()))
   } catch (error) {
     logAuthFailure('auth:callback:failed', error)
     response = origin

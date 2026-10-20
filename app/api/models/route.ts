@@ -1,6 +1,7 @@
 import { connection } from 'next/server.js'
 import { featuredModels } from '../../../lib/featured-models'
 import { DEFAULT_MODEL } from '../../../lib/session'
+import { localMode, localModels } from '../../../lib/local-mode'
 
 export const maxDuration = 60
 
@@ -27,6 +28,11 @@ const FAILED = { status: 502, headers: { 'cache-control': 'no-store' } }
 export async function GET() {
   await connection()
   const defaultModel = process.env.FX0_MODEL ?? DEFAULT_MODEL
+  // Self-hosted: the local server's models, with no effort levels or fast lane.
+  if (localMode()) {
+    const models = localModels()
+    return Response.json({ models, defaultModel, efforts: {}, fast: [], featured: models }, { headers: { 'cache-control': 'no-store' } })
+  }
   if (cache && Date.now() - cache.at < 5 * 60_000) {
     return Response.json({ ...cache.catalog, defaultModel }, SHARED)
   }

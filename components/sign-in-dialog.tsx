@@ -70,7 +70,7 @@ export default function SignInDialog({ open, reauthorize, onOpenChange, onSignIn
                 <path d="M14 8a6 6 0 0 0-6-6" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
               </svg>
             )}
-            {reauthorize ? 'Reauthorize with Vercel' : 'Sign in with Vercel'}
+            {process.env.NEXT_PUBLIC_FX0_LOCAL === '1' ? 'Sign in' : reauthorize ? 'Reauthorize with Vercel' : 'Sign in with Vercel'}
           </a>
           <Button variant="outline" {...fastClick(() => onOpenChange(false))}>Cancel</Button>
         </div>

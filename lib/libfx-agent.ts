@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto'
-import { createFxAgent, createFxEngine, type FxAgent, type FxAgentHostTool, type FxEffort, type FxHostTool, type FxSession, type FxToolContext } from 'libfx'
+import { createFxAgent, createFxEngine, type FxAgent, type FxAgentHostTool, type FxEffort, type FxHostTool, type FxCustomProvider, type FxGatewayProvider, type FxProviderTool, type FxSession, type FxToolContext } from 'libfx'
 import { createTools, type ToolHost } from './tools'
 import { gatewayFetch, type GatewayError, type DesignDraftObserver } from './gateway-session'
 import { readExecutionFunding } from './turn-credential'
@@ -12,6 +12,7 @@ import { bindLibfxSession, chatOfLibfxSession, getActiveTurn } from './journal'
 import { createDraftContext } from './draft-context'
 import { closeDraftCall, storedDraftObserver } from './draft-store'
 import { turnBudget } from './turn-budget'
+import { localMode, localModels, localProvider, localSessionOf } from './local-mode'
 import {
   DEFAULT_MODEL,
   MAX_TURN_MODEL_STEPS,
@@ -41,8 +42,14 @@ export interface ChatRuntime {
 // Which model request of a turn this is: who sent it, and the conversation it
 // carries. A retry or a crash's resend of a step carries the same conversation, so
 // it has the same name; every new step, even after compaction, has a new one.
+// Gateway's body carries the conversation as `prompt`; Chat Completions as `messages`.
+function conversation(body: unknown): unknown {
+  const request = body as { prompt?: unknown; messages?: unknown } | null
+  return request?.prompt ?? request?.messages
+}
+
 export function modelStepName(sender: string, body: unknown): string {
-  const prompt = (body as { prompt?: unknown } | null)?.prompt ?? null
+  const prompt = conversation(body) ?? null
   return `${sender}:${createHash('sha256').update(JSON.stringify(prompt)).digest('base64url').slice(0, 22)}`
 }
 
@@ -50,7 +57,7 @@ export function modelStepName(sender: string, body: unknown): string {
 // last user message, plus this one. It needs no state, so it holds even where the
 // turn's shared budget (turn-budget.ts) is unknown or lost.
 export function turnModelStep(body: unknown): number {
-  const prompt = (body as { prompt?: unknown })?.prompt
+  const prompt = conversation(body)
   if (!Array.isArray(prompt)) return 1
   let steps = 1
   for (let index = prompt.length - 1; index >= 0; index--) {
@@ -93,7 +100,7 @@ function chatFetch(
     const id = await chatId()
     const url = new URL(input instanceof Request ? input.url : String(input))
     const method = (init?.method ?? (input instanceof Request ? input.method : 'GET')).toUpperCase()
-    const modelRequest = method === 'POST' && url.pathname.endsWith('/language-model')
+    const modelRequest = method === 'POST' && (url.pathname.endsWith('/language-model') || url.pathname.endsWith('/chat/completions'))
     let body: unknown = null
     if (modelRequest && typeof init?.body === 'string') {
       try { body = JSON.parse(init.body) } catch { /* libfx validates its own body */ }
@@ -202,20 +209,34 @@ export function durableAgent(runtime: ChatRuntime, instructions: string): FxAgen
     // libfx's environment or OIDC fallback.
     apiKey: 'session-authenticated',
     fetch: (input, init) => {
-      const id = requestHeader(input, init, 'x-session-id')
+      const id = requestHeader(input, init, 'x-session-id') ?? localSessionOf(requestHeader(input, init, 'authorization'))
       return chatFetch(() => chatOfRequest(id), () => drafts.turn(id))(input, init)
     },
     onEvent: event => drafts.observe(event),
     // Hooks run synchronously before a restored engine starts its next request.
     hooks: { onEvent: event => drafts.observe(event) },
-    model: DEFAULT_MODEL,
+    model: localMode() ? localModels()[0] : DEFAULT_MODEL,
     instructions,
-    tools: [...chatTools(runtime, true), { name: 'web_search', providerExecuted: true }],
+    tools: [...chatTools(runtime, true), ...gatewayTools()],
+    ...providerOptions(),
   })
   return g.__fx0LibfxAgent
 }
 
+// Self-hosted: a local model server, and sessions in files (FX_SESSIONS_DIR).
+// Otherwise AI Gateway, with each request's credential set by chatFetch.
+function providerOptions(): FxCustomProvider | FxGatewayProvider {
+  return localMode() ? localProvider() : {}
+}
+
+// AI Gateway's web search runs at the provider, so a local model server has none.
+function gatewayTools(): FxProviderTool[] {
+  return localMode() ? [] : [{ name: 'web_search', providerExecuted: true }]
+}
+
 function chatModel(host: SessionState, sponsored = false) {
+  // A local server advertises no effort levels or fast lane.
+  if (localMode()) return { id: effectiveModel(host) }
   if (sponsored) return { id: TRIAL_MODEL, effort: 'low' as FxEffort, fast: true }
   return { id: effectiveModel(host), effort: effectiveEffort(host) as FxEffort, fast: effectiveFast(host) }
 }
@@ -262,8 +283,9 @@ export async function runSubagent(
   const engine = await createFxEngine({
     apiKey: 'session-authenticated',
     fetch: chatFetch(async () => chatId, () => turnId, `subagent:${crypto.randomUUID()}`),
+    ...providerOptions(),
     model: pinned
-      ? { id: pinned.model, effort: pinned.effort as FxEffort, fast: pinned.fast }
+      ? localMode() ? { id: pinned.model } : { id: pinned.model, effort: pinned.effort as FxEffort, fast: pinned.fast }
       : chatModel(host, funding.ok && 'kind' in funding.credential),
     instructions,
     tools: [
@@ -275,7 +297,7 @@ export async function runSubagent(
           }
         },
       })),
-      { name: 'web_search', providerExecuted: true },
+      ...gatewayTools(),
     ],
   })
   try {

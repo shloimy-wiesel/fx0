@@ -136,6 +136,8 @@ Neon Postgres holds accounts, who owns each chat, finished turns and every desig
 
 ## Run it locally
 
+To run fx0 entirely on your own machine, with Docker, a local model and no Vercel services, see [SELF_HOSTING.md](SELF_HOSTING.md).
+
 You'll need Node.js 24 and three services:
 
 1. A [Sign in with Vercel](https://vercel.com/docs/sign-in-with-vercel) app with the scopes `openid profile email offline_access` and the permissions AI Gateway: Use and Team: Read Only. Add `http://localhost:3000/api/auth/callback` as a callback URL. Don't leave out `offline_access`: without it, Vercel sends no refresh token and sign-in fails.

@@ -17,7 +17,7 @@ function SignInLink({ href }: { href: string }) {
   return (
     <a href={href}
       className="mt-8 flex h-10 items-center justify-center bg-primary px-4 text-sm font-medium text-primary-foreground hover:opacity-90 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring">
-      Continue with Vercel
+      {process.env.NEXT_PUBLIC_FX0_LOCAL === '1' ? 'Continue' : 'Continue with Vercel'}
     </a>
   )
 }

@@ -7,6 +7,13 @@ export const SIGNED_IN_HINT_COOKIE = 'fx0-signed-in'
 // reload. It never proves that revocation succeeded or grants authentication.
 export const SIGN_OUT_PENDING_COOKIE = 'fx0-signout-pending'
 
+// Secure cookies in production, except a self-hosted server on plain HTTP
+// (FX0_LOCAL=1 with an http:// APP_URL), where browsers would drop them.
+export function secureCookies(): boolean {
+  return process.env.NODE_ENV === 'production' &&
+    !(process.env.FX0_LOCAL === '1' && process.env.APP_URL?.startsWith('http://'))
+}
+
 export function signOutPendingCookie(pending: boolean, secure: boolean): string {
   return [
     `${SIGN_OUT_PENDING_COOKIE}=${pending ? '1' : ''}`, 'Path=/',
