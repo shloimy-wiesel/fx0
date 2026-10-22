@@ -7,7 +7,7 @@ x-db-url: &db-url postgres://fx0:${POSTGRES_PASSWORD:-fx0}@postgres:5432/fx0
 services:
   app:
     build: .
-    image: devselfhost/fx0:0.1.0
+    image: devselfhost/fx0:0.1.1
     restart: unless-stopped
     ports:
       - "${FX0_BIND:-127.0.0.1}:${FX0_PORT:-3000}:3000"
@@ -40,9 +40,9 @@ services:
 
   # Applies migrations/ to Postgres, then exits.
   migrate:
-    image: devselfhost/fx0:0.1.0
+    image: devselfhost/fx0:0.1.1
     build: .
-    command: ["node", "scripts/migrate-database.mjs"]
+    command: ["scripts/migrate-database.mjs"]
     environment:
       FX0_LOCAL: "1"
       DATABASE_URL: *db-url

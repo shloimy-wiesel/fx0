@@ -44,7 +44,7 @@ docker compose up -d ollama
 docker compose --profile setup run --rm pull-model
 docker compose pull postgres redis redis-http ollama
 docker pull alpine:3.20
-docker save -o fx0-images.tar devselfhost/fx0:0.1.0 postgres:17-alpine redis:7.4-alpine alpine:3.20 \
+docker save -o fx0-images.tar devselfhost/fx0:0.1.1 postgres:17-alpine redis:7.4-alpine alpine:3.20 \
   hiett/serverless-redis-http:0.0.10 ollama/ollama:0.12.6
 docker run --rm -v "$(basename "$PWD")_ollama:/from" -v "$PWD:/to" alpine:3.20 tar czf /to/ollama-models.tgz -C /from .
 
